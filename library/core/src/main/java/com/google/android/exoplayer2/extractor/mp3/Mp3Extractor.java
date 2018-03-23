@@ -177,7 +177,7 @@ public final class Mp3Extractor implements Extractor {
     if (seeker == null) {
       seeker = maybeReadSeekFrame(input);
       if (seeker == null
-          || (!seeker.isSeekable() && (flags & FLAG_ENABLE_CONSTANT_BITRATE_SEEKING) != 0)) {
+          || (flags & FLAG_ENABLE_CONSTANT_BITRATE_SEEKING) != 0) {
         seeker = getConstantBitrateSeeker(input);
       }
       extractorOutput.seekMap(seeker);
