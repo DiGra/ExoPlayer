@@ -45,9 +45,7 @@ android {
 dependencies {
     implementation project(modulePrefix + 'library-core')
     implementation 'com.android.support:support-annotations:' + supportLibraryVersion
-    api('com.squareup.okhttp3:okhttp:3.10.0') {
-        exclude group: 'org.json'
-    }
+    api 'com.squareup.okhttp3:okhttp:3.10.0'
 }
 
 ext {
