@@ -15,7 +15,7 @@
  */
 package com.google.android.exoplayer2.source;
 
-import android.support.annotation.Nullable;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.Timeline;
 import com.google.android.exoplayer2.util.Assertions;
@@ -193,4 +193,9 @@ public final class SinglePeriodTimeline extends Timeline {
     return UID.equals(uid) ? 0 : C.INDEX_UNSET;
   }
 
+  @Override
+  public Object getUidOfPeriod(int periodIndex) {
+    Assertions.checkIndex(periodIndex, 0, 1);
+    return UID;
+  }
 }

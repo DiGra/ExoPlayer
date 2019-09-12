@@ -16,7 +16,11 @@ apply plugin: 'com.android.library'
 
 android {
     compileSdkVersion project.ext.compileSdkVersion
-    buildToolsVersion project.ext.buildToolsVersion
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
 
     defaultConfig {
         minSdkVersion project.ext.minSdkVersion
@@ -24,10 +28,7 @@ android {
         consumerProguardFiles 'proguard-rules.txt'
     }
 
-    lintOptions {
-        // See: https://github.com/square/okio/issues/58
-        warning 'InvalidPackage'
-    }
+    testOptions.unitTests.includeAndroidResources = true
 
     buildTypes {
         release {
@@ -44,8 +45,9 @@ android {
 
 dependencies {
     implementation project(modulePrefix + 'library-core')
-    implementation 'com.android.support:support-annotations:' + supportLibraryVersion
-    api 'com.squareup.okhttp3:okhttp:3.10.0'
+    implementation 'androidx.annotation:annotation:1.1.0'
+    compileOnly 'org.checkerframework:checker-qual:' + checkerframeworkVersion
+    api 'com.squareup.okhttp3:okhttp:3.12.1'
 }
 
 ext {

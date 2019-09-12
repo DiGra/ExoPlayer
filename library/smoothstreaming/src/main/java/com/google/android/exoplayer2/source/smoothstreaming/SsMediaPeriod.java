@@ -15,11 +15,10 @@
  */
 package com.google.android.exoplayer2.source.smoothstreaming;
 
-import android.support.annotation.Nullable;
-import android.util.Base64;
+import androidx.annotation.Nullable;
 import com.google.android.exoplayer2.C;
 import com.google.android.exoplayer2.SeekParameters;
-import com.google.android.exoplayer2.extractor.mp4.TrackEncryptionBox;
+import com.google.android.exoplayer2.offline.StreamKey;
 import com.google.android.exoplayer2.source.CompositeSequenceableLoaderFactory;
 import com.google.android.exoplayer2.source.MediaPeriod;
 import com.google.android.exoplayer2.source.MediaSourceEventListener.EventDispatcher;
@@ -29,28 +28,26 @@ import com.google.android.exoplayer2.source.TrackGroup;
 import com.google.android.exoplayer2.source.TrackGroupArray;
 import com.google.android.exoplayer2.source.chunk.ChunkSampleStream;
 import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifest;
-import com.google.android.exoplayer2.source.smoothstreaming.manifest.SsManifest.ProtectionElement;
 import com.google.android.exoplayer2.trackselection.TrackSelection;
 import com.google.android.exoplayer2.upstream.Allocator;
+import com.google.android.exoplayer2.upstream.LoadErrorHandlingPolicy;
 import com.google.android.exoplayer2.upstream.LoaderErrorThrower;
+import com.google.android.exoplayer2.upstream.TransferListener;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.List;
 
-/**
- * A SmoothStreaming {@link MediaPeriod}.
- */
-/* package */ final class SsMediaPeriod implements MediaPeriod,
-    SequenceableLoader.Callback<ChunkSampleStream<SsChunkSource>> {
-
-  private static final int INITIALIZATION_VECTOR_SIZE = 8;
+/** A SmoothStreaming {@link MediaPeriod}. */
+/* package */ final class SsMediaPeriod
+    implements MediaPeriod, SequenceableLoader.Callback<ChunkSampleStream<SsChunkSource>> {
 
   private final SsChunkSource.Factory chunkSourceFactory;
+  private final @Nullable TransferListener transferListener;
   private final LoaderErrorThrower manifestLoaderErrorThrower;
-  private final int minLoadableRetryCount;
+  private final LoadErrorHandlingPolicy loadErrorHandlingPolicy;
   private final EventDispatcher eventDispatcher;
   private final Allocator allocator;
   private final TrackGroupArray trackGroups;
-  private final TrackEncryptionBox[] trackEncryptionBoxes;
   private final CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory;
 
   private @Nullable Callback callback;
@@ -59,28 +56,24 @@ import java.util.ArrayList;
   private SequenceableLoader compositeSequenceableLoader;
   private boolean notifiedReadingStarted;
 
-  public SsMediaPeriod(SsManifest manifest, SsChunkSource.Factory chunkSourceFactory,
+  public SsMediaPeriod(
+      SsManifest manifest,
+      SsChunkSource.Factory chunkSourceFactory,
+      @Nullable TransferListener transferListener,
       CompositeSequenceableLoaderFactory compositeSequenceableLoaderFactory,
-      int minLoadableRetryCount, EventDispatcher eventDispatcher,
-      LoaderErrorThrower manifestLoaderErrorThrower, Allocator allocator) {
+      LoadErrorHandlingPolicy loadErrorHandlingPolicy,
+      EventDispatcher eventDispatcher,
+      LoaderErrorThrower manifestLoaderErrorThrower,
+      Allocator allocator) {
+    this.manifest = manifest;
     this.chunkSourceFactory = chunkSourceFactory;
+    this.transferListener = transferListener;
     this.manifestLoaderErrorThrower = manifestLoaderErrorThrower;
-    this.minLoadableRetryCount = minLoadableRetryCount;
+    this.loadErrorHandlingPolicy = loadErrorHandlingPolicy;
     this.eventDispatcher = eventDispatcher;
     this.allocator = allocator;
     this.compositeSequenceableLoaderFactory = compositeSequenceableLoaderFactory;
-
     trackGroups = buildTrackGroups(manifest);
-    ProtectionElement protectionElement = manifest.protectionElement;
-    if (protectionElement != null) {
-      byte[] keyId = getProtectionElementKeyId(protectionElement.data);
-      // We assume pattern encryption does not apply.
-      trackEncryptionBoxes = new TrackEncryptionBox[] {
-          new TrackEncryptionBox(true, null, INITIALIZATION_VECTOR_SIZE, keyId, 0, 0, null)};
-    } else {
-      trackEncryptionBoxes = null;
-    }
-    this.manifest = manifest;
     sampleStreams = newSampleStreamArray(0);
     compositeSequenceableLoader =
         compositeSequenceableLoaderFactory.createCompositeSequenceableLoader(sampleStreams);
@@ -102,6 +95,8 @@ import java.util.ArrayList;
     callback = null;
     eventDispatcher.mediaPeriodReleased();
   }
+
+  // MediaPeriod implementation.
 
   @Override
   public void prepare(Callback callback, long positionUs) {
@@ -131,6 +126,7 @@ import java.util.ArrayList;
           stream.release();
           streams[i] = null;
         } else {
+          stream.getChunkSource().updateTrackSelection(selections[i]);
           sampleStreamsList.add(stream);
         }
       }
@@ -146,6 +142,19 @@ import java.util.ArrayList;
     compositeSequenceableLoader =
         compositeSequenceableLoaderFactory.createCompositeSequenceableLoader(sampleStreams);
     return positionUs;
+  }
+
+  @Override
+  public List<StreamKey> getStreamKeys(List<TrackSelection> trackSelections) {
+    List<StreamKey> streamKeys = new ArrayList<>();
+    for (int selectionIndex = 0; selectionIndex < trackSelections.size(); selectionIndex++) {
+      TrackSelection trackSelection = trackSelections.get(selectionIndex);
+      int streamElementIndex = trackGroups.indexOf(trackSelection.getTrackGroup());
+      for (int i = 0; i < trackSelection.length(); i++) {
+        streamKeys.add(new StreamKey(streamElementIndex, trackSelection.getIndexInTrackGroup(i)));
+      }
+    }
+    return streamKeys;
   }
 
   @Override
@@ -202,7 +211,7 @@ import java.util.ArrayList;
     return positionUs;
   }
 
-  // SequenceableLoader.Callback implementation
+  // SequenceableLoader.Callback implementation.
 
   @Override
   public void onContinueLoadingRequested(ChunkSampleStream<SsChunkSource> sampleStream) {
@@ -214,8 +223,13 @@ import java.util.ArrayList;
   private ChunkSampleStream<SsChunkSource> buildSampleStream(TrackSelection selection,
       long positionUs) {
     int streamElementIndex = trackGroups.indexOf(selection.getTrackGroup());
-    SsChunkSource chunkSource = chunkSourceFactory.createChunkSource(manifestLoaderErrorThrower,
-        manifest, streamElementIndex, selection, trackEncryptionBoxes);
+    SsChunkSource chunkSource =
+        chunkSourceFactory.createChunkSource(
+            manifestLoaderErrorThrower,
+            manifest,
+            streamElementIndex,
+            selection,
+            transferListener);
     return new ChunkSampleStream<>(
         manifest.streamElements[streamElementIndex].type,
         null,
@@ -224,7 +238,7 @@ import java.util.ArrayList;
         this,
         allocator,
         positionUs,
-        minLoadableRetryCount,
+        loadErrorHandlingPolicy,
         eventDispatcher);
   }
 
@@ -240,27 +254,4 @@ import java.util.ArrayList;
   private static ChunkSampleStream<SsChunkSource>[] newSampleStreamArray(int length) {
     return new ChunkSampleStream[length];
   }
-
-  private static byte[] getProtectionElementKeyId(byte[] initData) {
-    StringBuilder initDataStringBuilder = new StringBuilder();
-    for (int i = 0; i < initData.length; i += 2) {
-      initDataStringBuilder.append((char) initData[i]);
-    }
-    String initDataString = initDataStringBuilder.toString();
-    String keyIdString = initDataString.substring(
-        initDataString.indexOf("<KID>") + 5, initDataString.indexOf("</KID>"));
-    byte[] keyId = Base64.decode(keyIdString, Base64.DEFAULT);
-    swap(keyId, 0, 3);
-    swap(keyId, 1, 2);
-    swap(keyId, 4, 5);
-    swap(keyId, 6, 7);
-    return keyId;
-  }
-
-  private static void swap(byte[] data, int firstPosition, int secondPosition) {
-    byte temp = data[firstPosition];
-    data[firstPosition] = data[secondPosition];
-    data[secondPosition] = temp;
-  }
-
 }
