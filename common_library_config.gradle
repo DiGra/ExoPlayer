@@ -15,6 +15,18 @@
 apply from: "$gradle.ext.exoplayerSettingsDir/constants.gradle"
 apply plugin: 'com.android.library'
 
+tasks.whenTaskAdded { task ->
+    if (task.name.equals("lint")) {
+        //this is for speed up build
+        task.enabled = false
+    }
+    if(task.name.contains("Test"))
+    {
+        //this is what you need
+        task.enabled = false
+    }
+}
+
 android {
     compileSdkVersion project.ext.compileSdkVersion
 
